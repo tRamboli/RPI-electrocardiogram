@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time ECG Monitor</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #00ff00;
+            margin-bottom: 10px;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+        }
+        .stat-box {
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00ff00;
+        }
+        #ecgPlot {
+            width: 100%;
+            height: 600px;
+            background-color: #000;
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+        .status {
+            text-align: center;
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .status.connected {
+            background-color: #1a4d1a;
+            color: #00ff00;
+        }
+        .status.disconnected {
+            background-color: #4d1a1a;
+            color: #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🫀 Real-Time ECG Monitor</h1>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-label">Sample Rate</div>
+                <div class="stat-value" id="sampleRate">-- Hz</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Current Voltage</div>
+                <div class="stat-value" id="currentVoltage">-- V</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Total Samples</div>
+                <div class="stat-value" id="totalSamples">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Window</div>
+                <div class="stat-value">10s</div>
+            </div>
+        </div>
+
+        <div id="ecgPlot"></div>
+        
+        <div class="status" id="status">
+            <span id="statusText">Connecting...</span>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        
+        let timestamps = [];
+        let voltages = [];
+        let sampleCount = 0;
+        let lastUpdateTime = Date.now();
+        let sampleRateCounter = 0;
+        let currentSampleRate = 0;
+        
+        const WINDOW_SIZE = 10; // seconds
+        
+        // Initialize plot
+        const layout = {
+            title: '',
+            xaxis: {
+                title: 'Time (seconds)',
+                color: '#00ff00',
+                gridcolor: '#333',
+                range: [0, WINDOW_SIZE],
+                fixedrange: true
+            },
+            yaxis: {
+                title: 'Voltage (V)',
+                color: '#00ff00',
+                gridcolor: '#333',
+                zeroline: true,
+                zerolinecolor: '#666',
+                fixedrange: true
+            },
+            paper_bgcolor: '#000',
+            plot_bgcolor: '#000',
+            font: { color: '#00ff00' },
+            margin: { t: 30, r: 30, b: 50, l: 60 },
+            showlegend: false
+        };
+        
+        const trace = {
+            x: [],
+            y: [],
+            mode: 'lines',
+            line: {
+                color: '#00ff00',
+                width: 1.5
+            },
+            type: 'scatter'
+        };
+        
+        Plotly.newPlot('ecgPlot', [trace], layout, {
+            responsive: true,
+            displayModeBar: false
+        });
+        
+        // Load initial data
+        fetch('/data')
+            .then(response => response.json())
+            .then(data => {
+                timestamps = data.timestamps;
+                voltages = data.voltages;
+                updatePlot();
+            });
+        
+        // Socket connection handlers
+        socket.on('connect', () => {
+            document.getElementById('status').className = 'status connected';
+            document.getElementById('statusText').textContent = '✓ Connected';
+        });
+        
+        socket.on('disconnect', () => {
+            document.getElementById('status').className = 'status disconnected';
+            document.getElementById('statusText').textContent = '✗ Disconnected';
+        });
+        
+        // Receive real-time data
+        socket.on('ecg_data', (data) => {
+            timestamps.push(data.time);
+            voltages.push(data.voltage);
+            sampleCount++;
+            sampleRateCounter++;
+            
+            // Keep only last 10 seconds of data
+            const currentTime = data.time;
+            while (timestamps.length > 0 && currentTime - timestamps[0] > WINDOW_SIZE) {
+                timestamps.shift();
+                voltages.shift();
+            }
+            
+            // Update stats
+            document.getElementById('currentVoltage').textContent = data.voltage.toFixed(4) + ' V';
+            document.getElementById('totalSamples').textContent = sampleCount;
+            
+            // Calculate sample rate every second
+            const now = Date.now();
+            if (now - lastUpdateTime >= 1000) {
+                currentSampleRate = sampleRateCounter;
+                document.getElementById('sampleRate').textContent = currentSampleRate + ' Hz';
+                sampleRateCounter = 0;
+                lastUpdateTime = now;
+            }
+        });
+        
+        // Continuous real-time plot update
+        function updatePlot() {
+            if (timestamps.length === 0) return;
+            
+            // Get the current time window
+            const maxTime = timestamps[timestamps.length - 1];
+            const minTime = maxTime - WINDOW_SIZE;
+            
+            // Use Plotly.react for smooth updates
+            Plotly.react('ecgPlot', [{
+                x: timestamps,
+                y: voltages,
+                mode: 'lines',
+                line: {
+                    color: '#00ff00',
+                    width: 1.5
+                },
+                type: 'scatter'
+            }], {
+                title: '',
+                xaxis: {
+                    title: 'Time (seconds)',
+                    color: '#00ff00',
+                    gridcolor: '#333',
+                    range: [minTime, maxTime],
+                    fixedrange: true
+                },
+                yaxis: {
+                    title: 'Voltage (V)',
+                    color: '#00ff00',
+                    gridcolor: '#333',
+                    zeroline: true,
+                    zerolinecolor: '#666',
+                    fixedrange: true
+                },
+                paper_bgcolor: '#000',
+                plot_bgcolor: '#000',
+                font: { color: '#00ff00' },
+                margin: { t: 30, r: 30, b: 50, l: 60 },
+                showlegend: false
+            }, {
+                responsive: true,
+                displayModeBar: false
+            });
+        }
+        
+        // Update plot continuously at 30 FPS for smooth scrolling
+        setInterval(updatePlot, 33);
+    </script>
+</body>
+</html>
