@@ -25,8 +25,9 @@ function App() {
   const MAX_POINTS = 5000;
 
   useEffect(() => {
-    // Connect to Socket.IO server
-    socketRef.current = io('http://localhost:5001');
+    // Connect to Socket.IO server - use window.location.hostname to work across network
+    const serverUrl = `http://${window.location.hostname}:5001`;
+    socketRef.current = io(serverUrl);
     
     socketRef.current.on('connect', () => {
       console.log('Connected to server');
@@ -39,7 +40,7 @@ function App() {
     });
     
     // Load initial data
-    fetch('http://localhost:5001/data')
+    fetch(`${serverUrl}/data`)
       .then(response => response.json())
       .then(data => {
         const initialData = data.timestamps.map((time, index) => ({
